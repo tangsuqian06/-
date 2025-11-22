@@ -1,10 +1,14 @@
 import { GoogleGenAI } from "@google/genai";
-// @ts-ignore
-import mammoth from "mammoth";
 
 const getAI = () => {
-  // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  // Priority: 1. Environment Variable (Build/Server side) 2. LocalStorage (Client side BYOK)
+  const apiKey = process.env.API_KEY || localStorage.getItem('GEMINI_API_KEY');
+  
+  if (!apiKey) {
+    throw new Error("未检测到 API Key。请点击左下角“设置 API Key”按钮进行配置。");
+  }
+  
+  return new GoogleGenAI({ apiKey });
 };
 
 const MODEL_FAST = 'gemini-2.5-flash';
@@ -50,9 +54,15 @@ export const extractTextContent = async (file: File): Promise<string> => {
     const mimeType = file.type;
     let textPrompt = "Please extract all the English text content (articles, stories, questions) from this file. Maintain the original paragraph structure. Do not add any conversational filler. If there are questions/exercises, preserve them.";
 
-    // 1. Handle Word Documents (.docx) using Mammoth
+    // 1. Handle Word Documents (.docx) using Mammoth (Browser CDN version)
     if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || file.name.endsWith(".docx")) {
         const arrayBuffer = await fileToArrayBuffer(file);
+        // Access mammoth from window object (loaded via CDN in index.html)
+        const mammoth = (window as any).mammoth;
+        if (!mammoth) {
+            throw new Error("Docx解析器加载失败，请刷新页面重试");
+        }
+        
         const result = await mammoth.extractRawText({ arrayBuffer });
         const rawText = result.value;
         // Send raw extracted text to Gemini for cleanup/formatting
@@ -99,7 +109,7 @@ export const extractTextContent = async (file: File): Promise<string> => {
 
   } catch (error: any) {
     console.error("Error extracting text:", error);
-    throw new Error(error.message || "文件解析失败");
+    throw new Error(error.message || "文件解析失败，请检查 API Key 是否正确");
   }
 };
 
@@ -111,13 +121,13 @@ export const translateBlockAdvanced = async (
   try {
     const ai = getAI();
     
-    // Constructing a structured prompt
+    // Use JSON.stringify on the paragraphText to ensure quotes inside the text don't break the prompt
     const prompt = `
     我需要将一段英语翻译成中文。请分别提供：
     1. 整段话的流畅中文翻译。
     2. 针对我提供的句子列表，按顺序提供每一句的对应中文翻译。
 
-    原文段落: "${paragraphText}"
+    原文段落: ${JSON.stringify(paragraphText)}
     
     原文句子列表:
     ${JSON.stringify(sentences)}
@@ -145,13 +155,13 @@ export const translateBlockAdvanced = async (
 
   } catch (error: any) {
     console.error("Translation error:", error);
-    return { paragraph: "翻译失败", sentences: [] };
+    return { paragraph: "翻译失败 (请检查 API Key)", sentences: [] };
   }
 };
 
 export const translateWord = async (word: string, sentenceContext: string): Promise<string> => {
   try {
-    const prompt = `Translate "${word}" to Chinese (context: "${sentenceContext}"). Return ONLY the word (max 4 chars).`;
+    const prompt = `Translate "${word}" to Simplified Chinese (context: "${sentenceContext}"). Return ONLY the Chinese word (max 4 chars).`;
     const ai = getAI();
     const response = await ai.models.generateContent({ model: MODEL_FAST, contents: prompt });
     return (response.text || "").trim();
@@ -160,13 +170,15 @@ export const translateWord = async (word: string, sentenceContext: string): Prom
 
 export const getWordDefinition = async (word: string, sentenceContext: string): Promise<string> => {
   try {
-    // Updated prompt to enforce Chinese definitions
+    // Updated prompt to enforce Chinese definitions strictly
     const prompt = `
       As an expert English teacher for Chinese students, explain the word "${word}" based on the context: "${sentenceContext}".
       
+      CRITICAL: All definitions, explanations, and translations MUST be in Simplified Chinese.
+
       Requirements:
       1. "ipa": IPA pronunciation.
-      2. "senses": List of meanings. "pos" (part of speech) must be standard (n., v., adj.). "def" must be the CHINESE definition.
+      2. "senses": List of meanings. "pos" (part of speech) must be standard (n., v., adj.). "def" must be the detailed CHINESE definition.
       3. "examples": One or two sentences. "en" is English, "zh" is Chinese translation.
       4. "phrases": Common phrases involving this word.
 
@@ -174,7 +186,7 @@ export const getWordDefinition = async (word: string, sentenceContext: string): 
       { 
         "ipa": "...", 
         "senses": [{"pos": "...", "def": "中文释义..."}], 
-        "examples": [{"en": "...", "zh": "..."}], 
+        "examples": [{"en": "...", "zh": "中文翻译..."}], 
         "phrases": ["..."] 
       }
     `;
@@ -190,7 +202,7 @@ export const getWordDefinition = async (word: string, sentenceContext: string): 
 
 export const analyzeGrammar = async (text: string): Promise<string> => {
   try {
-    const prompt = `分析此句语法: "${text}". 返回 JSON: { "structure": ["主语:.."], "grammarPoints": [{"point": "..", "desc": ".."}], "translation": ".." }`;
+    const prompt = `分析此句语法: "${text}". 返回 JSON: { "structure": ["主语:.."], "grammarPoints": [{"point": "..", "desc": ".."}], "translation": ".." }. Keep descriptions in Chinese.`;
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,

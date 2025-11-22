@@ -61,24 +61,35 @@ const App: React.FC = () => {
 
       setTranslatingAll(true);
       
-      // Process blocks sequentially to avoid rate limits, or parallel with limit
-      // For simplicity and UX feedback, let's do parallel but simple
+      // Process blocks sequentially to avoid rate limits
       try {
-          const newBlocks = await Promise.all(activeDoc.blocks.map(async (block) => {
-              // Skip if already translated? User requirement says "click to update", so we should re-translate.
-              // Or maybe only if text changed. But "user confirms content... then clicks" implies explicit action.
-              // Let's re-translate to be safe.
-              const sentences = getSentencesFromBlock(block);
-              const result = await translateBlockAdvanced(block.text, sentences);
-              
-              return {
-                  ...block,
-                  translation: result.paragraph,
-                  sentenceTranslations: result.sentences
-              };
-          }));
+          // Filter out empty blocks to save API calls
+          const nonEmptyBlocks = activeDoc.blocks.filter(b => b.text.trim().length > 0);
+          
+          // We'll use a simple for loop to process sequentially to be robust
+          for (const block of nonEmptyBlocks) {
+             try {
+                 const sentences = getSentencesFromBlock(block);
+                 // Skip if very short or just symbols
+                 if (sentences.length === 0) continue;
 
-          setDocuments(docs => docs.map(d => d.id === activeDocId ? { ...d, blocks: newBlocks } : d));
+                 const result = await translateBlockAdvanced(block.text, sentences);
+                 
+                 setDocuments(docs => docs.map(d => {
+                     if (d.id !== activeDocId) return d;
+                     return {
+                         ...d,
+                         blocks: d.blocks.map(b => b.id === block.id ? {
+                             ...b,
+                             translation: result.paragraph,
+                             sentenceTranslations: result.sentences
+                         } : b)
+                     };
+                 }));
+             } catch (err) {
+                 console.error("Error translating block", block.id, err);
+             }
+          }
       } catch (e) {
           console.error(e);
           alert("翻译过程中出错，请重试");
@@ -103,10 +114,7 @@ const App: React.FC = () => {
   };
 
   const deleteBlock = (blockId: string) => {
-      // Use functional update to ensure we are looking at the latest state
       setDocuments(currentDocs => currentDocs.map(doc => {
-          // Crucial: ensure we modify the document that contains this block
-          // Since activeDocId might not have synced in edge cases, check block existence
           if (doc.blocks.some(b => b.id === blockId)) {
               return {
                   ...doc,
@@ -192,6 +200,15 @@ const App: React.FC = () => {
     } catch (e) { alert("分析失败"); } finally { setAnalyzing(false); }
   };
 
+  const handleSetKey = () => {
+      const key = prompt("请输入您的 Google Gemini API Key (将保存在本地浏览器中):", localStorage.getItem('GEMINI_API_KEY') || '');
+      if (key !== null) {
+          localStorage.setItem('GEMINI_API_KEY', key);
+          alert("API Key 已保存，页面将刷新");
+          window.location.reload();
+      }
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100 font-sans">
       
@@ -238,8 +255,18 @@ const App: React.FC = () => {
                  </div>
              ))}
          </div>
-         <div className="p-4 border-t border-gray-800 text-xs text-gray-500">
-            {deferredPrompt && <button onClick={() => {deferredPrompt.prompt(); setDeferredPrompt(null)}} className="text-accent-400 hover:text-accent-300">安装到桌面</button>}
+         <div className="p-4 border-t border-gray-800 space-y-3">
+            <button 
+                onClick={handleSetKey} 
+                className="w-full text-left text-xs text-gray-500 hover:text-accent-400 flex items-center gap-2"
+            >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                设置 API Key
+            </button>
+            {deferredPrompt && <button onClick={() => {deferredPrompt.prompt(); setDeferredPrompt(null)}} className="w-full text-left text-xs text-accent-400 hover:text-accent-300 flex items-center gap-2">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                安装到桌面
+            </button>}
          </div>
       </div>
 
