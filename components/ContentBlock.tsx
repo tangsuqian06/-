@@ -1,4 +1,3 @@
-
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { ContentBlock as ContentBlockType, ViewMode, WordData } from '../types';
 import { Word } from './Word';
@@ -8,10 +7,11 @@ interface Props {
   block: ContentBlockType;
   mode: ViewMode;
   onUpdateBlock: (id: string, updates: Partial<ContentBlockType>) => void;
+  onDeleteBlock: (id: string) => void;
   onUpdateWord: (blockId: string, wordId: string, updates: Partial<WordData>) => void;
 }
 
-export const ContentBlock: React.FC<Props> = ({ block, mode, onUpdateBlock, onUpdateWord }) => {
+export const ContentBlock: React.FC<Props> = ({ block, mode, onUpdateBlock, onDeleteBlock, onUpdateWord }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(block.text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -42,16 +42,10 @@ export const ContentBlock: React.FC<Props> = ({ block, mode, onUpdateBlock, onUp
     setIsEditing(false);
   };
 
-  const handleDeleteBlock = () => {
-    if(confirm('确定要删除这一段吗？')) {
-        // Assuming parent handles empty text update as deletion or we need a delete prop.
-        // Since App.tsx updateBlock logic handles text updates by re-parsing, 
-        // passing empty text acts like clearing it, but true deletion needs parent support.
-        // For now, let's clear content or we can implement a delete callback in App.tsx later.
-        // Actually, let's just update text to empty string, App.tsx filters empty blocks usually?
-        // No, App.tsx doesn't filter on update. Let's just allow editing text.
-        onUpdateBlock(block.id, { text: "" }); 
-    }
+  const handleDeleteBlock = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onDeleteBlock(block.id);
   };
   
   const handleDeleteGrammar = (grammarId: string) => {
@@ -112,18 +106,18 @@ export const ContentBlock: React.FC<Props> = ({ block, mode, onUpdateBlock, onUp
         
         {/* Edit Button (Visible on Hover) */}
         {!isEditing && (
-            <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+            <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 z-10">
                 <button 
-                    onClick={() => setIsEditing(true)}
-                    className="p-1.5 text-gray-500 hover:text-accent-400 bg-gray-900/80 rounded backdrop-blur"
+                    onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
+                    className="p-1.5 text-gray-500 hover:text-accent-400 bg-gray-900/80 rounded backdrop-blur shadow-sm border border-gray-800"
                     title="编辑内容"
                 >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                 </button>
                  <button 
                     onClick={handleDeleteBlock}
-                    className="p-1.5 text-gray-500 hover:text-red-400 bg-gray-900/80 rounded backdrop-blur"
-                    title="清空此段"
+                    className="p-1.5 text-gray-500 hover:text-red-400 bg-gray-900/80 rounded backdrop-blur shadow-sm border border-gray-800"
+                    title="删除此段"
                 >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                 </button>

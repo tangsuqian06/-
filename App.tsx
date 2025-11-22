@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { LearningDocument, ContentBlock, ViewMode, WordData, SelectionState, GrammarAnalysis } from './types';
 import { parseTextToBlocks, generateId, getSentencesFromBlock } from './utils/textUtils';
-import { extractTextContent, fileToBase64, analyzeGrammar, translateBlockAdvanced } from './services/geminiService';
+import { extractTextContent, analyzeGrammar, translateBlockAdvanced } from './services/geminiService';
 import { ContentBlock as ContentBlockComp } from './components/ContentBlock';
 import { FloatingMenu } from './components/FloatingMenu';
 
@@ -103,6 +102,21 @@ const App: React.FC = () => {
     }));
   };
 
+  const deleteBlock = (blockId: string) => {
+      // Use functional update to ensure we are looking at the latest state
+      setDocuments(currentDocs => currentDocs.map(doc => {
+          // Crucial: ensure we modify the document that contains this block
+          // Since activeDocId might not have synced in edge cases, check block existence
+          if (doc.blocks.some(b => b.id === blockId)) {
+              return {
+                  ...doc,
+                  blocks: doc.blocks.filter(b => b.id !== blockId)
+              };
+          }
+          return doc;
+      }));
+  };
+
   const updateWord = (blockId: string, wordId: string, updates: Partial<WordData>) => {
     setDocuments(docs => docs.map(doc => {
       if (doc.id !== activeDocId) return doc;
@@ -117,7 +131,7 @@ const App: React.FC = () => {
   };
 
   const addNewBlock = () => {
-      const newBlock = parseTextToBlocks("New paragraph...")[0];
+      const newBlock = parseTextToBlocks("点击此处编辑内容...")[0];
       setDocuments(docs => docs.map(d => d.id === activeDocId ? {...d, blocks: [...d.blocks, newBlock]} : d));
   };
 
@@ -127,12 +141,18 @@ const App: React.FC = () => {
 
     setIsLoadingFile(true);
     try {
-      const base64 = await fileToBase64(file);
-      const extractedText = await extractTextContent(base64, file.type);
+      // Pass the raw file object to the service
+      const extractedText = await extractTextContent(file);
       const newBlocks = parseTextToBlocks(extractedText);
       setDocuments(docs => docs.map(d => d.id === activeDocId ? { ...d, blocks: [...d.blocks, ...newBlocks] } : d));
-    } catch (err: any) { alert(err.message); } 
-    finally { setIsLoadingFile(false); e.target.value = ''; }
+    } catch (err: any) { 
+        console.error(err);
+        alert(err.message || "文件解析出错"); 
+    } 
+    finally { 
+        setIsLoadingFile(false); 
+        e.target.value = ''; 
+    }
   };
 
   // Grammar Selection Logic
@@ -224,8 +244,8 @@ const App: React.FC = () => {
                     <button onClick={() => updateDocMode(ViewMode.SENTENCE)} className={`px-3 py-1.5 text-xs rounded-md transition-all ${activeDoc.viewMode === ViewMode.SENTENCE ? 'bg-gray-600 text-white shadow' : 'text-gray-400 hover:text-white'}`}>逐句视图</button>
                 </div>
                 
-                <label className={`ml-2 p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg cursor-pointer transition-colors ${isLoadingFile ? 'animate-pulse' : ''}`}>
-                    <input type="file" className="hidden" accept=".txt,.pdf,.doc,.docx" onChange={handleFileUpload} disabled={isLoadingFile} />
+                <label className={`ml-2 p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg cursor-pointer transition-colors ${isLoadingFile ? 'animate-pulse' : ''}`} title="上传文件 (支持 .txt, .pdf, .doc, .docx, 图片)">
+                    <input type="file" className="hidden" accept=".txt,.pdf,.doc,.docx,.jpg,.jpeg,.png,.webp" onChange={handleFileUpload} disabled={isLoadingFile} />
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                 </label>
             </div>
@@ -239,6 +259,7 @@ const App: React.FC = () => {
                         block={block} 
                         mode={activeDoc.viewMode}
                         onUpdateBlock={updateBlock}
+                        onDeleteBlock={deleteBlock}
                         onUpdateWord={updateWord}
                     />
                 ))}
