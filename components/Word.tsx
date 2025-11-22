@@ -15,6 +15,7 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
   const [showDetail, setShowDetail] = useState(false);
   const [popupStyle, setPopupStyle] = useState<React.CSSProperties>({});
   const wordRef = useRef<HTMLSpanElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null); // Ref for the popup container
 
   const isInteractable = word.cleanText.length > 0;
 
@@ -27,7 +28,7 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
     }
   };
 
-  // Effect to calculate position
+  // Effect to calculate position and handle interactions
   useEffect(() => {
     if (showDetail && wordRef.current) {
       const updatePosition = () => {
@@ -68,12 +69,36 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
       };
 
       updatePosition();
-      const handleScroll = () => setShowDetail(false);
+
+      // Intelligent scroll handler
+      const handleScroll = (e: Event) => {
+          // CRITICAL FIX: Check if the scroll event originated from inside the popup
+          // If it did (e.g. user scrolling the definition), DO NOT close.
+          if (popupRef.current && popupRef.current.contains(e.target as Node)) {
+              return;
+          }
+          // If scroll happened elsewhere (e.g. main page), close to avoid detachment
+          setShowDetail(false);
+      };
+
+      // Capture phase true is needed to detect scroll on overflow elements, 
+      // but we filter it inside the handler now.
       window.addEventListener('scroll', handleScroll, true);
       window.addEventListener('resize', updatePosition);
+      
+      // Add click outside listener as backup
+      const handleClickOutside = (e: MouseEvent) => {
+          if (popupRef.current && !popupRef.current.contains(e.target as Node) && 
+              wordRef.current && !wordRef.current.contains(e.target as Node)) {
+              setShowDetail(false);
+          }
+      };
+      window.addEventListener('mousedown', handleClickOutside);
+
       return () => {
         window.removeEventListener('scroll', handleScroll, true);
         window.removeEventListener('resize', updatePosition);
+        window.removeEventListener('mousedown', handleClickOutside);
       };
     }
   }, [showDetail]);
@@ -149,12 +174,14 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
 
       {showDetail && createPortal(
         <div 
+          ref={popupRef}
           style={popupStyle}
           className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl text-sm text-gray-200 flex flex-col overflow-hidden animate-in ring-1 ring-white/10 font-sans"
           onClick={(e) => e.stopPropagation()}
+          onWheel={(e) => e.stopPropagation()} // Prevent wheel event from bubbling up if needed
         >
            {/* Header */}
-           <div className="px-4 py-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
+           <div className="px-4 py-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center flex-shrink-0">
                <div className="flex flex-col">
                    <span className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-0.5">单词详解</span>
                    <div className="flex items-baseline gap-2">
@@ -167,7 +194,7 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
                </button>
            </div>
 
-           {/* Content */}
+           {/* Content - Scrollable */}
            <div className="p-4 overflow-y-auto custom-scrollbar max-h-[300px] space-y-4 bg-gray-900/95">
                {definitionData ? (
                    <>
