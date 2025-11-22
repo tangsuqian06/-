@@ -205,7 +205,36 @@ const App: React.FC = () => {
              {documents.map(doc => (
                  <div key={doc.id} onClick={() => setActiveDocId(doc.id)} className={`p-3 rounded cursor-pointer text-sm mb-1 flex justify-between group ${activeDocId === doc.id ? 'bg-gray-800 text-white' : 'text-gray-400 hover:bg-gray-800/50'}`}>
                     <span className="truncate">{doc.title}</span>
-                    <span onClick={(e) => {e.stopPropagation(); if(confirm('确认删除?')) {const n=documents.filter(d=>d.id!==doc.id); setDocuments(n); if(activeDocId===doc.id) setActiveDocId(n[0]?.id||'')}}} className="opacity-0 group-hover:opacity-100 hover:text-red-400">×</span>
+                    <button 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            // One-click delete without confirmation
+                            const remainingDocs = documents.filter(d => d.id !== doc.id);
+                            
+                            if (remainingDocs.length === 0) {
+                                // If all deleted, create a new blank doc
+                                const newDoc: LearningDocument = {
+                                    id: uuidv4(),
+                                    title: `新文档 ${new Date().toLocaleDateString()}`,
+                                    createdAt: Date.now(),
+                                    blocks: [],
+                                    viewMode: ViewMode.PARAGRAPH
+                                };
+                                setDocuments([newDoc]);
+                                setActiveDocId(newDoc.id);
+                            } else {
+                                setDocuments(remainingDocs);
+                                // If deleting active doc, switch to the first available
+                                if (activeDocId === doc.id) {
+                                    setActiveDocId(remainingDocs[0].id);
+                                }
+                            }
+                        }} 
+                        className="opacity-0 group-hover:opacity-100 hover:text-red-400 px-2 font-bold text-lg leading-none"
+                        title="一键删除"
+                    >
+                        ×
+                    </button>
                  </div>
              ))}
          </div>
