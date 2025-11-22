@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { WordData } from '../types';
+import { WordData, WordDefinition } from '../types';
 import { translateWord, getWordDefinition } from '../services/geminiService';
 
 interface WordProps {
@@ -18,7 +18,16 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
 
   const isInteractable = word.cleanText.length > 0;
 
-  // Effect to calculate position and handle scroll
+  // Helper to parse JSON safely
+  const parseDefinition = (jsonString: string): WordDefinition | null => {
+    try {
+      return JSON.parse(jsonString);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // Effect to calculate position
   useEffect(() => {
     if (showDetail && wordRef.current) {
       const updatePosition = () => {
@@ -26,37 +35,31 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
         const rect = wordRef.current.getBoundingClientRect();
         const screenH = window.innerHeight;
         const screenW = window.innerWidth;
-        const POPUP_WIDTH = 320; // Width of the popup
-        const POPUP_HEIGHT_EST = 300; // Estimated max height
+        const POPUP_WIDTH = 340; 
+        const POPUP_HEIGHT_MAX = 400; 
         const GAP = 8;
 
         let style: React.CSSProperties = {
           position: 'fixed',
           zIndex: 9999,
           width: `${POPUP_WIDTH}px`,
-          maxHeight: '300px',
-          overflowY: 'auto',
+          maxHeight: `${POPUP_HEIGHT_MAX}px`,
         };
 
-        // Horizontal Positioning
+        // Horizontal
         let left = rect.left;
         if (left + POPUP_WIDTH > screenW - 20) {
-          // If it goes off right edge, align to right edge with padding
           left = screenW - POPUP_WIDTH - 20;
         }
-        if (left < 10) left = 10; // Minimum left margin
+        if (left < 10) left = 10;
         style.left = `${left}px`;
 
-        // Vertical Positioning (Smart Flip)
+        // Vertical
         const spaceBelow = screenH - rect.bottom;
-        
-        if (spaceBelow < POPUP_HEIGHT_EST && rect.top > POPUP_HEIGHT_EST) {
-           // Not enough space below, but enough above -> Show Above
+        if (spaceBelow < 300 && rect.top > 300) {
            style.bottom = `${screenH - rect.top + GAP}px`;
            style.top = 'auto';
-           // Add a class for animation origin if needed
         } else {
-           // Default: Show Below
            style.top = `${rect.bottom + GAP}px`;
            style.bottom = 'auto';
         }
@@ -65,14 +68,9 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
       };
 
       updatePosition();
-
-      // Close on scroll to prevent floating popup becoming detached from word
       const handleScroll = () => setShowDetail(false);
-      
-      // Listen to both window and all scrollable parents (capture phase)
       window.addEventListener('scroll', handleScroll, true);
       window.addEventListener('resize', updatePosition);
-      
       return () => {
         window.removeEventListener('scroll', handleScroll, true);
         window.removeEventListener('resize', updatePosition);
@@ -85,7 +83,6 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
       if (!isInteractable) return;
 
       if (word.translation) {
-          // Toggle off
           onUpdate(word.id, { translation: undefined, definition: undefined });
           setShowDetail(false);
       } else {
@@ -117,10 +114,11 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
       }
   };
 
+  const definitionData = word.definition ? parseDefinition(word.definition) : null;
+
   return (
     <>
       <span className="relative inline-block leading-relaxed group">
-        {/* The English Word */}
         <span 
           ref={wordRef}
           onClick={handleWordClick}
@@ -131,36 +129,87 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
           {word.text}
         </span>
 
-        {/* The Inline Translation */}
         {word.translation && (
           <span 
               onClick={handleTransClick}
-              className="ml-1 cursor-pointer bg-accent-500 text-white px-1.5 py-0.5 rounded text-sm font-bold hover:bg-accent-600 align-middle select-none shadow-md transform transition-transform hover:scale-105"
-              title="点击查看详解"
+              className="ml-1 cursor-pointer bg-accent-600 text-white px-1.5 py-0.5 rounded text-sm font-bold hover:bg-accent-500 align-middle select-none shadow-sm"
           >
               {loading && !word.definition ? '...' : word.translation}
           </span>
         )}
       </span>
 
-      {/* Detailed Definition Popup (Rendered via Portal to avoid overflow issues) */}
-      {showDetail && word.definition && createPortal(
+      {showDetail && createPortal(
         <div 
           style={popupStyle}
-          className="bg-gray-800 border border-gray-600 rounded-lg shadow-2xl text-xs text-gray-100 text-left pointer-events-auto flex flex-col animate-in fade-in zoom-in-95 duration-100"
+          className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl text-sm text-gray-200 flex flex-col overflow-hidden animate-in"
           onClick={(e) => e.stopPropagation()}
         >
-           <div className="flex justify-between items-start p-3 border-b border-gray-700 bg-gray-900/50 rounded-t-lg sticky top-0 backdrop-blur-sm">
-               <span className="font-bold text-lg text-accent-400 select-text">{word.cleanText}</span>
-               <button 
-                 onClick={() => setShowDetail(false)}
-                 className="text-gray-400 hover:text-white p-1 hover:bg-gray-700 rounded transition-colors"
-               >
-                 ✕
-               </button>
+           {/* Header */}
+           <div className="px-4 py-3 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
+               <div>
+                   <span className="text-xl font-bold text-accent-400 mr-2">{word.cleanText}</span>
+                   {definitionData?.ipa && <span className="text-gray-400 font-mono text-xs">/{definitionData.ipa}/</span>}
+               </div>
+               <button onClick={() => setShowDetail(false)} className="text-gray-500 hover:text-white">✕</button>
            </div>
-           <div className="p-4 whitespace-pre-wrap leading-relaxed opacity-90 overflow-y-auto custom-scrollbar select-text">
-               {word.definition}
+
+           {/* Content */}
+           <div className="p-4 overflow-y-auto custom-scrollbar max-h-[300px] space-y-4">
+               {definitionData ? (
+                   <>
+                       {/* Senses */}
+                       <div className="space-y-2">
+                           {definitionData.senses.map((sense, idx) => (
+                               <div key={idx} className="flex gap-2">
+                                   <span className={`px-1.5 py-0.5 rounded text-xs font-bold h-fit ${
+                                       sense.pos.includes('v') ? 'bg-blue-900/50 text-blue-300 border border-blue-800' :
+                                       sense.pos.includes('n') ? 'bg-red-900/50 text-red-300 border border-red-800' :
+                                       sense.pos.includes('adj') ? 'bg-green-900/50 text-green-300 border border-green-800' :
+                                       'bg-gray-700 text-gray-300'
+                                   }`}>
+                                       {sense.pos}
+                                   </span>
+                                   <span className="text-gray-100">{sense.def}</span>
+                               </div>
+                           ))}
+                       </div>
+
+                       {/* Examples */}
+                       {definitionData.examples.length > 0 && (
+                           <div className="pt-2 border-t border-gray-800">
+                               <h4 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-bold">例句</h4>
+                               <ul className="space-y-3">
+                                   {definitionData.examples.map((ex, idx) => (
+                                       <li key={idx} className="text-xs">
+                                           <div className="text-gray-300 mb-0.5">{ex.en}</div>
+                                           <div className="text-gray-500">{ex.zh}</div>
+                                       </li>
+                                   ))}
+                               </ul>
+                           </div>
+                       )}
+                        
+                        {/* Phrases */}
+                       {definitionData.phrases && definitionData.phrases.length > 0 && (
+                           <div className="pt-2 border-t border-gray-800">
+                               <h4 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-bold">常用搭配</h4>
+                               <div className="flex flex-wrap gap-2">
+                                   {definitionData.phrases.map((ph, idx) => (
+                                       <span key={idx} className="px-2 py-1 bg-gray-800 rounded text-gray-400 text-xs">
+                                           {ph}
+                                       </span>
+                                   ))}
+                               </div>
+                           </div>
+                       )}
+                   </>
+               ) : (
+                   // Fallback for legacy or error data
+                   <div className="whitespace-pre-wrap text-gray-300">
+                       {word.definition}
+                   </div>
+               )}
            </div>
         </div>,
         document.body

@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 const STORAGE_KEY = 'user_gemini_api_key';
@@ -26,7 +27,6 @@ const getAI = () => {
 };
 
 const MODEL_FAST = 'gemini-2.5-flash';
-const MODEL_SMART = 'gemini-2.5-flash'; 
 
 // Helper to base64 encode files
 export const fileToBase64 = (file: File): Promise<string> => {
@@ -111,45 +111,58 @@ export const translateWord = async (word: string, sentenceContext: string): Prom
   }
 };
 
-// 4. Detailed Word Definition
+// 4. Detailed Word Definition (JSON Format)
 export const getWordDefinition = async (word: string, sentenceContext: string): Promise<string> => {
   try {
-    const prompt = `Provide a detailed explanation for the English word "${word}" for a Chinese learner.
-    Context: "${sentenceContext}"
-    Output format:
-    1. Pronunciation (IPA)
-    2. Definition in Chinese
-    3. Two example sentences (English + Chinese translation)
-    4. Common collocations
-    Keep it structured and easy to read.`;
+    const prompt = `You are a professional English dictionary for Chinese learners.
+    Define "${word}" based on context: "${sentenceContext}".
+    
+    Return strictly valid JSON in this format (do not use Markdown code blocks):
+    {
+      "ipa": "[pronunciation]",
+      "senses": [
+        {"pos": "n./v./adj.", "def": "Chinese definition"}
+      ],
+      "examples": [
+        {"en": "English example sentence.", "zh": "Chinese translation."}
+      ],
+      "phrases": ["common phrase 1", "common phrase 2"]
+    }`;
 
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: MODEL_SMART,
-      contents: prompt
+      model: MODEL_FAST,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json"
+      }
     });
     return response.text || "";
   } catch (error) {
-    return "无法获取详情";
+    return JSON.stringify({
+      ipa: "",
+      senses: [{pos: "Error", def: "无法获取详情，请重试"}],
+      examples: [],
+      phrases: []
+    });
   }
 };
 
 // 5. Grammar Analysis
 export const analyzeGrammar = async (text: string): Promise<string> => {
   try {
-    const prompt = `Analyze the grammar of the following English sentence(s) for a Chinese student:
-    "${text}"
+    const prompt = `Analyze the grammar of this sentence for a Chinese student: "${text}"
     
-    Please provide:
-    1. Sentence structure breakdown (Subject, Verb, Object, etc.)
-    2. Key grammatical points or tenses used.
-    3. Explanation of any difficult idioms or phrases.
+    Output requirements:
+    1. Structure: Subject/Verb/Object breakdown.
+    2. Key Points: Tenses, clauses, special usages.
+    3. Explanation: Meaning of difficult parts.
     
-    Output in Chinese. Use Markdown for formatting.`;
+    Important: Output plain text with simple formatting. Do not use bold symbols (**), hashtags (#) or other markdown artifacts. Use simple bullets (-) or numbering. Keep it clean and easy to read.`;
 
     const ai = getAI();
     const response = await ai.models.generateContent({
-      model: MODEL_SMART,
+      model: MODEL_FAST,
       contents: prompt
     });
     return response.text || "";

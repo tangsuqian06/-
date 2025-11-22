@@ -1,7 +1,15 @@
+
 export enum TranslationMode {
   SENTENCE = 'sentence',
   PARAGRAPH = 'paragraph',
   FULL = 'full'
+}
+
+export interface WordDefinition {
+  ipa: string;
+  senses: { pos: string; def: string }[];
+  examples: { en: string; zh: string }[];
+  phrases?: string[];
 }
 
 export interface WordData {
@@ -9,7 +17,7 @@ export interface WordData {
   text: string;
   cleanText: string; // Text without punctuation for API calls
   translation?: string; // Short inline translation
-  definition?: string; // Detailed definition
+  definition?: string; // JSON string of WordDefinition or raw text
 }
 
 export interface GrammarAnalysis {
