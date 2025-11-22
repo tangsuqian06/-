@@ -1,8 +1,16 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get AI instance safely at runtime (after polyfills have run)
+const getAI = () => {
+  // Ensure process.env works, or fall back to import.meta for Vite
+  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
+  // Note: In production, the polyfill in index.tsx ensures process.env.API_KEY is populated 
+  // from import.meta.env.VITE_API_KEY
+  return new GoogleGenAI({ apiKey: apiKey });
+};
+
 const MODEL_FAST = 'gemini-2.5-flash';
-const MODEL_SMART = 'gemini-2.5-flash'; // Flash is capable enough for these tasks and faster
+const MODEL_SMART = 'gemini-2.5-flash'; 
 
 // Helper to base64 encode files
 export const fileToBase64 = (file: File): Promise<string> => {
@@ -11,7 +19,6 @@ export const fileToBase64 = (file: File): Promise<string> => {
     reader.readAsDataURL(file);
     reader.onload = () => {
       const result = reader.result as string;
-      // Remove data URL prefix (e.g., "data:image/jpeg;base64,")
       const base64 = result.split(',')[1];
       resolve(base64);
     };
@@ -19,12 +26,13 @@ export const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-// 1. Extract text from user uploaded files (Text, PDF, Docx, Image)
+// 1. Extract text
 export const extractTextContent = async (
   fileBase64: string, 
   mimeType: string
 ): Promise<string> => {
   try {
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
       contents: {
@@ -48,7 +56,7 @@ export const extractTextContent = async (
   }
 };
 
-// 2. Translate text (Paragraph or Sentence)
+// 2. Translate text
 export const translateText = async (text: string, context: string = ""): Promise<string> => {
   try {
     const prompt = `Translate the following English text into natural, fluent Chinese. 
@@ -56,6 +64,7 @@ export const translateText = async (text: string, context: string = ""): Promise
     Text to translate: "${text}"
     Only return the Chinese translation.`;
     
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
       contents: prompt
@@ -67,12 +76,13 @@ export const translateText = async (text: string, context: string = ""): Promise
   }
 };
 
-// 3. Translate a single word (Concise)
+// 3. Translate single word
 export const translateWord = async (word: string, sentenceContext: string): Promise<string> => {
   try {
     const prompt = `Translate the English word "${word}" into Chinese based on this context: "${sentenceContext}". 
     Return ONLY the most appropriate Chinese word or short phrase (max 4 chars). No pinyin, no explanations.`;
 
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
       contents: prompt
@@ -95,6 +105,7 @@ export const getWordDefinition = async (word: string, sentenceContext: string): 
     4. Common collocations
     Keep it structured and easy to read.`;
 
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_SMART,
       contents: prompt
@@ -118,6 +129,7 @@ export const analyzeGrammar = async (text: string): Promise<string> => {
     
     Output in Chinese. Use Markdown for formatting.`;
 
+    const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_SMART,
       contents: prompt
@@ -127,12 +139,3 @@ export const analyzeGrammar = async (text: string): Promise<string> => {
     return "分析失败";
   }
 };
-
-// 6. Full Document Translation (Batched approach simulation for this demo)
-// For the "Full Translation" mode, we usually iterate over blocks in the UI, 
-// but we can also have a helper here if needed.
-export const translateFullDoc = async (text: string): Promise<string> => {
-    // For very long texts, we would need to chunk. 
-    // For this demo, we assume reasonable length or UI loop.
-    return translateText(text);
-}
