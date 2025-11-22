@@ -25,15 +25,42 @@ const App: React.FC = () => {
   const [isLoadingFile, setIsLoadingFile] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
+  // Load data from LocalStorage on mount
   useEffect(() => {
      window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); setDeferredPrompt(e); });
-     const saved = localStorage.getItem('eng_master_docs');
-     if (saved) try { setDocuments(JSON.parse(saved)); } catch (e) {}
+     
+     const savedDocsStr = localStorage.getItem('eng_master_docs');
+     const savedActiveId = localStorage.getItem('eng_master_active_id');
+
+     if (savedDocsStr) {
+         try { 
+             const parsedDocs = JSON.parse(savedDocsStr);
+             if (Array.isArray(parsedDocs) && parsedDocs.length > 0) {
+                 setDocuments(parsedDocs);
+                 
+                 // CRITICAL FIX: Sync activeDocId with loaded documents.
+                 // If we don't do this, activeDocId stays as 'init-1' (default), but the loaded docs might not contain 'init-1'.
+                 // This causes mismatches where the UI shows the first doc (via fallback) but actions use the wrong ID.
+                 
+                 // 1. Try to restore the last used ID
+                 if (savedActiveId && parsedDocs.some((d: any) => d.id === savedActiveId)) {
+                     setActiveDocId(savedActiveId);
+                 } else {
+                     // 2. Fallback to the first document in the list
+                     setActiveDocId(parsedDocs[0].id);
+                 }
+             }
+         } catch (e) {
+             console.error("Failed to load saved documents", e);
+         }
+     }
   }, []);
 
+  // Save data to LocalStorage on change
   useEffect(() => {
     localStorage.setItem('eng_master_docs', JSON.stringify(documents));
-  }, [documents]);
+    localStorage.setItem('eng_master_active_id', activeDocId);
+  }, [documents, activeDocId]);
 
   const activeDoc = documents.find(d => d.id === activeDocId) || documents[0];
 
@@ -57,6 +84,9 @@ const App: React.FC = () => {
 
   // FULL TRANSLATION LOGIC
   const handleFullTranslation = async () => {
+      // Ensure we use the correct ID (activeDoc.id) not just the state variable which might be lagging in edge cases
+      const currentDocId = activeDoc.id;
+
       if (activeDoc.blocks.length === 0) return;
 
       setTranslatingAll(true);
@@ -76,7 +106,7 @@ const App: React.FC = () => {
                  const result = await translateBlockAdvanced(block.text, sentences);
                  
                  setDocuments(docs => docs.map(d => {
-                     if (d.id !== activeDocId) return d;
+                     if (d.id !== currentDocId) return d;
                      return {
                          ...d,
                          blocks: d.blocks.map(b => b.id === block.id ? {
@@ -105,6 +135,7 @@ const App: React.FC = () => {
         if (b.id !== blockId) return b;
         if (updates.text && updates.text !== b.text) {
             const reParsed = parseTextToBlocks(updates.text)[0];
+            // Preserve ID to prevent React key thrashing
             return { ...b, text: updates.text!, words: reParsed.words, translation: undefined, sentenceTranslations: undefined };
         }
         return { ...b, ...updates };
@@ -115,6 +146,7 @@ const App: React.FC = () => {
 
   const deleteBlock = (blockId: string) => {
       setDocuments(currentDocs => currentDocs.map(doc => {
+          // We check if the block exists in this doc to ensure we are modifying the right one
           if (doc.blocks.some(b => b.id === blockId)) {
               return {
                   ...doc,
@@ -139,8 +171,10 @@ const App: React.FC = () => {
   };
 
   const addNewBlock = () => {
+      // Use activeDoc.id to ensure we target the currently visible document
+      const targetDocId = activeDoc.id;
       const newBlock = parseTextToBlocks("点击此处编辑内容...")[0];
-      setDocuments(docs => docs.map(d => d.id === activeDocId ? {...d, blocks: [...d.blocks, newBlock]} : d));
+      setDocuments(docs => docs.map(d => d.id === targetDocId ? {...d, blocks: [...d.blocks, newBlock]} : d));
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
