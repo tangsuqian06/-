@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+
+import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { WordData } from '../types';
 import { translateWord, getWordDefinition } from '../services/geminiService';
 
@@ -11,68 +13,79 @@ interface WordProps {
 export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
   const [loading, setLoading] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
+  const [popupStyle, setPopupStyle] = useState<React.CSSProperties>({});
+  const wordRef = useRef<HTMLSpanElement>(null);
 
   const isInteractable = word.cleanText.length > 0;
 
-  const handleClick = async (e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent triggering parent block selection
-    if (!isInteractable) return;
+  // Effect to calculate position and handle scroll
+  useEffect(() => {
+    if (showDetail && wordRef.current) {
+      const updatePosition = () => {
+        if (!wordRef.current) return;
+        const rect = wordRef.current.getBoundingClientRect();
+        const screenH = window.innerHeight;
+        const screenW = window.innerWidth;
+        const POPUP_WIDTH = 320; // Width of the popup
+        const POPUP_HEIGHT_EST = 300; // Estimated max height
+        const GAP = 8;
 
-    // Case 1: Already has detail shown -> toggle off
-    if (showDetail) {
-      setShowDetail(false);
-      return;
-    }
+        let style: React.CSSProperties = {
+          position: 'fixed',
+          zIndex: 9999,
+          width: `${POPUP_WIDTH}px`,
+          maxHeight: '300px',
+          overflowY: 'auto',
+        };
 
-    // Case 2: Has translation but no detail shown -> show detail (fetch if needed)
-    if (word.translation) {
-        if (!word.definition) {
-             setLoading(true);
-             try {
-                 const def = await getWordDefinition(word.cleanText, context);
-                 onUpdate(word.id, { definition: def });
-                 setShowDetail(true);
-             } finally {
-                 setLoading(false);
-             }
-        } else {
-            setShowDetail(true);
+        // Horizontal Positioning
+        let left = rect.left;
+        if (left + POPUP_WIDTH > screenW - 20) {
+          // If it goes off right edge, align to right edge with padding
+          left = screenW - POPUP_WIDTH - 20;
         }
-        return;
+        if (left < 10) left = 10; // Minimum left margin
+        style.left = `${left}px`;
+
+        // Vertical Positioning (Smart Flip)
+        const spaceBelow = screenH - rect.bottom;
+        
+        if (spaceBelow < POPUP_HEIGHT_EST && rect.top > POPUP_HEIGHT_EST) {
+           // Not enough space below, but enough above -> Show Above
+           style.bottom = `${screenH - rect.top + GAP}px`;
+           style.top = 'auto';
+           // Add a class for animation origin if needed
+        } else {
+           // Default: Show Below
+           style.top = `${rect.bottom + GAP}px`;
+           style.bottom = 'auto';
+        }
+
+        setPopupStyle(style);
+      };
+
+      updatePosition();
+
+      // Close on scroll to prevent floating popup becoming detached from word
+      const handleScroll = () => setShowDetail(false);
+      
+      // Listen to both window and all scrollable parents (capture phase)
+      window.addEventListener('scroll', handleScroll, true);
+      window.addEventListener('resize', updatePosition);
+      
+      return () => {
+        window.removeEventListener('scroll', handleScroll, true);
+        window.removeEventListener('resize', updatePosition);
+      };
     }
+  }, [showDetail]);
 
-    // Case 3: No translation -> Fetch translation
-    setLoading(true);
-    try {
-      const trans = await translateWord(word.cleanText, context);
-      onUpdate(word.id, { translation: trans });
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleTranslationClick = (e: React.MouseEvent) => {
-      e.stopPropagation();
-      // Click on the translation box itself to remove it? 
-      // Spec says: "Click translation again -> show detailed explanation"
-      // My logic above handles click on the Word component wrapper.
-      // Let's separate: Click Word -> Toggle Translation. Click Translation -> Show Detail.
-  };
-
-  // Refined Interaction according to spec:
-  // 1. Click Word -> Insert Translation to right.
-  // 2. Click Translation -> Show Detail.
-  // 3. Click Word again (if translation exists) -> Remove Translation? "Again click the English word disappears" -> spec says "Again click that English word disappears" (Wait, spec says "Insert translation... again click that English word disappears").
-  
-  // Let's try this exact spec flow:
   const handleWordClick = async (e: React.MouseEvent) => {
       e.stopPropagation();
       if (!isInteractable) return;
 
       if (word.translation) {
-          // Spec: "Again click that English word disappears" (removes translation)
+          // Toggle off
           onUpdate(word.id, { translation: undefined, definition: undefined });
           setShowDetail(false);
       } else {
@@ -90,7 +103,6 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
       e.stopPropagation();
       if (!word.translation) return;
       
-      // Spec: "Again click translated Chinese -> show detailed English explanation"
       if (!word.definition) {
           setLoading(true);
           try {
@@ -106,45 +118,53 @@ export const Word: React.FC<WordProps> = ({ word, context, onUpdate }) => {
   };
 
   return (
-    <span className="relative inline-block leading-relaxed group">
-      {/* The English Word */}
-      <span 
-        onClick={handleWordClick}
-        className={`cursor-pointer rounded px-0.5 transition-colors duration-200 ${
-          isInteractable ? 'hover:bg-gray-700 text-gray-200' : 'text-gray-300'
-        }`}
-      >
-        {word.text}
+    <>
+      <span className="relative inline-block leading-relaxed group">
+        {/* The English Word */}
+        <span 
+          ref={wordRef}
+          onClick={handleWordClick}
+          className={`cursor-pointer rounded px-0.5 transition-colors duration-200 ${
+            isInteractable ? 'hover:bg-gray-700 text-gray-200' : 'text-gray-300'
+          }`}
+        >
+          {word.text}
+        </span>
+
+        {/* The Inline Translation */}
+        {word.translation && (
+          <span 
+              onClick={handleTransClick}
+              className="ml-1 cursor-pointer bg-accent-500 text-white px-1.5 py-0.5 rounded text-sm font-bold hover:bg-accent-600 align-middle select-none shadow-md transform transition-transform hover:scale-105"
+              title="点击查看详解"
+          >
+              {loading && !word.definition ? '...' : word.translation}
+          </span>
+        )}
       </span>
 
-      {/* The Inline Translation */}
-      {word.translation && (
-        <span 
-            onClick={handleTransClick}
-            className="ml-1 cursor-pointer bg-accent-500 text-white px-1.5 py-0.5 rounded text-sm font-bold hover:bg-accent-600 align-middle select-none shadow-md transform transition-transform hover:scale-105"
-            title="点击查看详解"
+      {/* Detailed Definition Popup (Rendered via Portal to avoid overflow issues) */}
+      {showDetail && word.definition && createPortal(
+        <div 
+          style={popupStyle}
+          className="bg-gray-800 border border-gray-600 rounded-lg shadow-2xl text-xs text-gray-100 text-left pointer-events-auto flex flex-col animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
         >
-            {loading && !word.definition ? '...' : word.translation}
-        </span>
-      )}
-
-      {/* Detailed Definition Popup */}
-      {showDetail && word.definition && (
-        <div className="absolute z-50 bottom-full left-0 mb-2 w-72 p-4 bg-gray-800 border border-gray-600 rounded-lg shadow-xl text-xs text-gray-100 text-left pointer-events-auto">
-           <div className="flex justify-between items-start mb-2 border-b border-gray-600 pb-2">
-               <span className="font-bold text-lg text-accent-400">{word.cleanText}</span>
+           <div className="flex justify-between items-start p-3 border-b border-gray-700 bg-gray-900/50 rounded-t-lg sticky top-0 backdrop-blur-sm">
+               <span className="font-bold text-lg text-accent-400 select-text">{word.cleanText}</span>
                <button 
-                 onClick={(e) => { e.stopPropagation(); setShowDetail(false); }}
-                 className="text-gray-400 hover:text-white"
-               >✕</button>
+                 onClick={() => setShowDetail(false)}
+                 className="text-gray-400 hover:text-white p-1 hover:bg-gray-700 rounded transition-colors"
+               >
+                 ✕
+               </button>
            </div>
-           <div className="whitespace-pre-wrap leading-relaxed opacity-90">
+           <div className="p-4 whitespace-pre-wrap leading-relaxed opacity-90 overflow-y-auto custom-scrollbar select-text">
                {word.definition}
            </div>
-           {/* Pointer Arrow */}
-           <div className="absolute top-full left-4 -mt-1 w-2 h-2 bg-gray-800 border-r border-b border-gray-600 transform rotate-45"></div>
-        </div>
+        </div>,
+        document.body
       )}
-    </span>
+    </>
   );
 };
