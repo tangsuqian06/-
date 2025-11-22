@@ -1,11 +1,27 @@
 import { GoogleGenAI } from "@google/genai";
 
-// Helper to get AI instance safely at runtime (after polyfills have run)
+const STORAGE_KEY = 'user_gemini_api_key';
+
+export const hasValidKey = (): boolean => {
+  const envKey = (import.meta as any).env?.VITE_API_KEY || (typeof process !== 'undefined' ? process.env.API_KEY : '');
+  const localKey = localStorage.getItem(STORAGE_KEY);
+  return !!(envKey || localKey);
+};
+
+export const saveApiKey = (key: string) => {
+  localStorage.setItem(STORAGE_KEY, key.trim());
+};
+
+// Helper to get AI instance safely at runtime
 const getAI = () => {
-  // Ensure process.env works, or fall back to import.meta for Vite
-  const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
-  // Note: In production, the polyfill in index.tsx ensures process.env.API_KEY is populated 
-  // from import.meta.env.VITE_API_KEY
+  // Priority: 1. Vite Env  2. Process Env  3. LocalStorage
+  const envKey = (import.meta as any).env?.VITE_API_KEY || (typeof process !== 'undefined' ? process.env.API_KEY : '');
+  const apiKey = envKey || localStorage.getItem(STORAGE_KEY) || '';
+  
+  if (!apiKey) {
+    throw new Error("MISSING_API_KEY");
+  }
+  
   return new GoogleGenAI({ apiKey: apiKey });
 };
 
@@ -50,9 +66,10 @@ export const extractTextContent = async (
       }
     });
     return response.text || "";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error extracting text:", error);
-    throw error;
+    if (error.message === "MISSING_API_KEY") throw error;
+    throw new Error("文件解析失败，请检查文件格式或网络");
   }
 };
 
@@ -70,8 +87,9 @@ export const translateText = async (text: string, context: string = ""): Promise
       contents: prompt
     });
     return response.text || "";
-  } catch (error) {
+  } catch (error: any) {
     console.error("Translation error:", error);
+    if (error.message === "MISSING_API_KEY") return "请先设置 API Key";
     return "翻译失败";
   }
 };

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { LearningDocument, ContentBlock, TranslationMode, WordData, SelectionState, GrammarAnalysis } from './types';
 import { parseTextToBlocks, generateId } from './utils/textUtils';
-import { extractTextContent, fileToBase64, analyzeGrammar } from './services/geminiService';
+import { extractTextContent, fileToBase64, analyzeGrammar, hasValidKey, saveApiKey } from './services/geminiService';
 import { ContentBlock as ContentBlockComp } from './components/ContentBlock';
 import { FloatingMenu } from './components/FloatingMenu';
 
@@ -15,6 +15,63 @@ const initialDoc: LearningDocument = {
   translationMode: TranslationMode.PARAGRAPH
 };
 
+// API Key Modal Component
+const ApiKeyModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [inputKey, setInputKey] = useState('');
+  
+  const handleSave = () => {
+    if (inputKey.trim().length > 10) {
+      saveApiKey(inputKey);
+      window.location.reload(); // Reload to apply
+    } else {
+      alert("请输入有效的 API Key");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+      <div className="bg-gray-900 border border-gray-700 p-8 rounded-2xl max-w-md w-full shadow-2xl">
+        <div className="text-center mb-6">
+           <div className="w-16 h-16 bg-accent-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-accent-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+           </div>
+           <h2 className="text-2xl font-bold text-white mb-2">配置 AI 服务</h2>
+           <p className="text-gray-400 text-sm">
+             本应用需要 Google Gemini API 支持。<br/>
+             Key 将仅存储在您的本地浏览器中，不会发送给任何第三方。
+           </p>
+        </div>
+
+        <div className="space-y-4">
+           <div>
+             <label className="block text-xs text-gray-500 mb-1 uppercase font-bold tracking-wider">Gemini API Key</label>
+             <input 
+               type="password" 
+               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-accent-500 focus:ring-1 focus:ring-accent-500 outline-none transition-all placeholder-gray-600"
+               placeholder="AIzaSy..."
+               value={inputKey}
+               onChange={e => setInputKey(e.target.value)}
+             />
+           </div>
+           
+           <button 
+             onClick={handleSave}
+             className="w-full bg-accent-600 hover:bg-accent-500 text-white font-bold py-3 rounded-lg transition-all transform hover:scale-[1.02] shadow-lg hover:shadow-accent-500/25"
+           >
+             保存并开始使用
+           </button>
+           
+           <div className="text-center mt-4">
+             <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-accent-400 hover:text-accent-300 underline">
+               没有 Key? 点击此处免费获取
+             </a>
+           </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   // State
   const [documents, setDocuments] = useState<LearningDocument[]>([initialDoc]);
@@ -23,6 +80,34 @@ const App: React.FC = () => {
   const [selectionState, setSelectionState] = useState<SelectionState | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [isLoadingFile, setIsLoadingFile] = useState(false);
+  const [showKeyModal, setShowKeyModal] = useState(false);
+  
+  // Check for PWA installability
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+     // Check API Key
+     if (!hasValidKey()) {
+         setShowKeyModal(true);
+     }
+
+     // PWA Prompt
+     window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    });
+  }, []);
+
+  const handleInstallClick = () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then((choiceResult: any) => {
+        if (choiceResult.outcome === 'accepted') {
+          setDeferredPrompt(null);
+        }
+      });
+    }
+  };
 
   const activeDoc = documents.find(d => d.id === activeDocId) || documents[0];
 
@@ -87,16 +172,12 @@ const App: React.FC = () => {
       let newBlocks = doc.blocks.map(b => {
         if (b.id !== blockId) return b;
         if (updates.text && updates.text !== b.text) {
-            // Re-parse logic
-            const reParsed = parseTextToBlocks(updates.text)[0]; // Assuming single block edit
-            // Preserve ID and existing grammar if possible? 
-            // For simplicity, grammar linked to old text indices might be invalid, so we clear it or keep it attached to the block ID.
-            // We keep the Block ID but replace content.
+            const reParsed = parseTextToBlocks(updates.text)[0];
             return {
                 ...b,
                 text: updates.text!,
                 words: reParsed.words,
-                translation: undefined // Reset translation on edit
+                translation: undefined
             };
         }
         return { ...b, ...updates };
@@ -138,6 +219,12 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!hasValidKey()) {
+        setShowKeyModal(true);
+        e.target.value = '';
+        return;
+    }
+
     setIsLoadingFile(true);
     try {
       const base64 = await fileToBase64(file);
@@ -149,18 +236,20 @@ const App: React.FC = () => {
         if (d.id === activeDocId) {
           return {
             ...d,
-            // Append or replace? Let's append.
             blocks: [...d.blocks, ...newBlocks]
           };
         }
         return d;
       }));
-    } catch (err) {
-      alert("解析文件失败");
+    } catch (err: any) {
+      if (err.message === 'MISSING_API_KEY') {
+          setShowKeyModal(true);
+      } else {
+          alert("解析文件失败: " + (err.message || "未知错误"));
+      }
       console.error(err);
     } finally {
       setIsLoadingFile(false);
-      // Reset input
       e.target.value = '';
     }
   };
@@ -172,17 +261,12 @@ const App: React.FC = () => {
     const handleSelection = () => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed || selection.toString().trim().length === 0) {
-        // Don't clear immediately if clicking inside the menu
-        // But for simplicity, we usually rely on mousedown checks or timeout.
-        // We will clear on click outside logic via specific UI elements.
         return;
       }
 
-      // Find which block contains the selection
       let node = selection.anchorNode;
       let blockElement: HTMLElement | null = null;
       
-      // Traverse up to find the block container
       while (node && node !== document.body) {
         if (node instanceof HTMLElement && node.dataset.blockId) {
           blockElement = node;
@@ -212,18 +296,23 @@ const App: React.FC = () => {
 
   const performGrammarAnalysis = async () => {
     if (!selectionState) return;
+    
+    if (!hasValidKey()) {
+        setShowKeyModal(true);
+        setSelectionState(null);
+        return;
+    }
+
     setAnalyzing(true);
     try {
       const result = await analyzeGrammar(selectionState.text);
       
-      // Create analysis object
       const newAnalysis: GrammarAnalysis = {
         id: uuidv4(),
         sourceText: selectionState.text,
         explanation: result
       };
 
-      // Add to the specific block
       setDocuments(docs => docs.map(doc => {
         if (doc.id !== activeDocId) return doc;
         return {
@@ -238,11 +327,11 @@ const App: React.FC = () => {
         };
       }));
       
-      setSelectionState(null); // Close menu
-      window.getSelection()?.removeAllRanges(); // Clear selection
+      setSelectionState(null);
+      window.getSelection()?.removeAllRanges();
     } catch (err) {
       console.error(err);
-      alert("分析失败，请重试");
+      alert("分析失败，请检查 Key 或网络");
     } finally {
       setAnalyzing(false);
     }
@@ -252,6 +341,9 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen overflow-hidden bg-gray-950 text-gray-100 font-sans">
       
+      {/* API Key Modal */}
+      {showKeyModal && <ApiKeyModal onClose={() => setShowKeyModal(false)} />}
+
       {/* Sidebar */}
       <div className={`${isSidebarOpen ? 'w-64' : 'w-0'} flex-shrink-0 bg-gray-900 border-r border-gray-800 transition-all duration-300 flex flex-col`}>
          <div className="p-4 flex items-center justify-between border-b border-gray-800">
@@ -270,6 +362,26 @@ const App: React.FC = () => {
                  </div>
              ))}
          </div>
+         
+         {/* Sidebar Footer Actions */}
+         <div className="p-4 border-t border-gray-800 space-y-2">
+            <button 
+                onClick={() => setShowKeyModal(true)}
+                className="w-full text-left flex items-center gap-2 px-3 py-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded text-sm transition-colors"
+            >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+                <span>配置 API Key</span>
+            </button>
+            {deferredPrompt && (
+                <button 
+                    onClick={handleInstallClick}
+                    className="w-full text-left flex items-center gap-2 px-3 py-2 text-accent-400 hover:text-accent-300 hover:bg-gray-800 rounded text-sm transition-colors font-medium"
+                >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    <span>安装客户端</span>
+                </button>
+            )}
+         </div>
       </div>
 
       {/* Main Content */}
@@ -282,7 +394,7 @@ const App: React.FC = () => {
                     <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
                 </button>
                 <input 
-                    className="bg-transparent border-none text-lg font-bold text-white focus:ring-0 w-64"
+                    className="bg-transparent border-none text-lg font-bold text-white focus:ring-0 w-64 placeholder-gray-600"
                     value={activeDoc.title}
                     onChange={(e) => updateDocTitle(e.target.value)}
                 />
@@ -292,7 +404,7 @@ const App: React.FC = () => {
                 {/* Translation Mode Toggle */}
                 <div className="flex bg-gray-800 rounded-lg p-1">
                     {[
-                        { m: TranslationMode.SENTENCE, l: '逐句' }, // Simulated via paragraph blocks usually
+                        { m: TranslationMode.SENTENCE, l: '逐句' }, 
                         { m: TranslationMode.PARAGRAPH, l: '逐段' },
                         { m: TranslationMode.FULL, l: '全文' }
                     ].map(opt => (
