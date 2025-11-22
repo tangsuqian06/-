@@ -1,34 +1,13 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-const STORAGE_KEY = 'user_gemini_api_key';
-
-export const hasValidKey = (): boolean => {
-  const envKey = (import.meta as any).env?.VITE_API_KEY || (typeof process !== 'undefined' ? process.env.API_KEY : '');
-  const localKey = localStorage.getItem(STORAGE_KEY);
-  return !!(envKey || localKey);
-};
-
-export const saveApiKey = (key: string) => {
-  localStorage.setItem(STORAGE_KEY, key.trim());
-};
-
-// Helper to get AI instance safely at runtime
 const getAI = () => {
-  // Priority: 1. Vite Env  2. Process Env  3. LocalStorage
-  const envKey = (import.meta as any).env?.VITE_API_KEY || (typeof process !== 'undefined' ? process.env.API_KEY : '');
-  const apiKey = envKey || localStorage.getItem(STORAGE_KEY) || '';
-  
-  if (!apiKey) {
-    throw new Error("MISSING_API_KEY");
-  }
-  
-  return new GoogleGenAI({ apiKey: apiKey });
+  // The API key must be obtained exclusively from the environment variable process.env.API_KEY.
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
 const MODEL_FAST = 'gemini-2.5-flash';
 
-// Helper to base64 encode files
 export const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -42,131 +21,119 @@ export const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-// 1. Extract text
-export const extractTextContent = async (
-  fileBase64: string, 
-  mimeType: string
-): Promise<string> => {
+export const extractTextContent = async (fileBase64: string, mimeType: string): Promise<string> => {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
       contents: {
         parts: [
-          {
-            inlineData: {
-              mimeType: mimeType,
-              data: fileBase64
-            }
-          },
-          {
-            text: "Please extract all the English text content from this file. Maintain the original paragraph structure. Do not add any conversational filler, just return the text."
-          }
+          { inlineData: { mimeType: mimeType, data: fileBase64 } },
+          { text: "Please extract all the English text content from this file. Maintain the original paragraph structure. Do not add any conversational filler." }
         ]
       }
     });
     return response.text || "";
   } catch (error: any) {
     console.error("Error extracting text:", error);
-    if (error.message === "MISSING_API_KEY") throw error;
-    throw new Error("文件解析失败，请检查文件格式或网络");
+    throw new Error("文件解析失败");
   }
 };
 
-// 2. Translate text
-export const translateText = async (text: string, context: string = ""): Promise<string> => {
+// Advanced Translation: Returns Paragraph + Sentence translations
+export const translateBlockAdvanced = async (
+    paragraphText: string, 
+    sentences: string[]
+): Promise<{ paragraph: string, sentences: string[] }> => {
   try {
-    const prompt = `Translate the following English text into natural, fluent Chinese. 
-    Context: ${context.substring(0, 100)}...
-    Text to translate: "${text}"
-    Only return the Chinese translation.`;
-    
     const ai = getAI();
+    
+    // Constructing a structured prompt
+    const prompt = `
+    我需要将一段英语翻译成中文。请分别提供：
+    1. 整段话的流畅中文翻译。
+    2. 针对我提供的句子列表，按顺序提供每一句的对应中文翻译。
+
+    原文段落: "${paragraphText}"
+    
+    原文句子列表:
+    ${JSON.stringify(sentences)}
+
+    请务必返回严格的 JSON 格式（不要包含 Markdown 代码块），格式如下:
+    {
+        "paragraph": "整段的中文翻译...",
+        "sentences": ["第一句翻译", "第二句翻译", ...]
+    }
+    `;
+
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
-      contents: prompt
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
     });
-    return response.text || "";
+
+    const text = response.text || "{}";
+    const data = JSON.parse(text);
+    
+    return {
+        paragraph: data.paragraph || "",
+        sentences: Array.isArray(data.sentences) ? data.sentences : []
+    };
+
   } catch (error: any) {
     console.error("Translation error:", error);
-    if (error.message === "MISSING_API_KEY") return "请先设置 API Key";
-    return "翻译失败";
+    return { paragraph: "翻译失败", sentences: [] };
   }
 };
 
-// 3. Translate single word
 export const translateWord = async (word: string, sentenceContext: string): Promise<string> => {
   try {
-    const prompt = `Translate the English word "${word}" into Chinese based on this context: "${sentenceContext}". 
-    Return ONLY the most appropriate Chinese word or short phrase (max 4 chars). No pinyin, no explanations.`;
-
+    const prompt = `Translate "${word}" to Chinese (context: "${sentenceContext}"). Return ONLY the word (max 4 chars).`;
     const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: MODEL_FAST,
-      contents: prompt
-    });
+    const response = await ai.models.generateContent({ model: MODEL_FAST, contents: prompt });
     return (response.text || "").trim();
-  } catch (error) {
-    return "Error";
-  }
+  } catch (error) { return "Error"; }
 };
 
-// 4. Detailed Word Definition (JSON Format)
 export const getWordDefinition = async (word: string, sentenceContext: string): Promise<string> => {
   try {
-    const prompt = `You are a professional English dictionary for Chinese learners.
-    Define "${word}" based on context: "${sentenceContext}".
-    
-    Return strictly valid JSON in this format (do not use Markdown code blocks):
-    {
-      "ipa": "[pronunciation]",
-      "senses": [
-        {"pos": "n./v./adj.", "def": "Chinese definition"}
-      ],
-      "examples": [
-        {"en": "English example sentence.", "zh": "Chinese translation."}
-      ],
-      "phrases": ["common phrase 1", "common phrase 2"]
-    }`;
+    // Updated prompt to enforce Chinese definitions
+    const prompt = `
+      As an expert English teacher for Chinese students, explain the word "${word}" based on the context: "${sentenceContext}".
+      
+      Requirements:
+      1. "ipa": IPA pronunciation.
+      2. "senses": List of meanings. "pos" (part of speech) must be standard (n., v., adj.). "def" must be the CHINESE definition.
+      3. "examples": One or two sentences. "en" is English, "zh" is Chinese translation.
+      4. "phrases": Common phrases involving this word.
 
+      Return STRICT JSON:
+      { 
+        "ipa": "...", 
+        "senses": [{"pos": "...", "def": "中文释义..."}], 
+        "examples": [{"en": "...", "zh": "..."}], 
+        "phrases": ["..."] 
+      }
+    `;
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
       contents: prompt,
-      config: {
-        responseMimeType: "application/json"
-      }
+      config: { responseMimeType: "application/json" }
     });
     return response.text || "";
-  } catch (error) {
-    return JSON.stringify({
-      ipa: "",
-      senses: [{pos: "Error", def: "无法获取详情，请重试"}],
-      examples: [],
-      phrases: []
-    });
-  }
+  } catch (error) { return "{}"; }
 };
 
-// 5. Grammar Analysis
 export const analyzeGrammar = async (text: string): Promise<string> => {
   try {
-    const prompt = `Analyze the grammar of this sentence for a Chinese student: "${text}"
-    
-    Output requirements:
-    1. Structure: Subject/Verb/Object breakdown.
-    2. Key Points: Tenses, clauses, special usages.
-    3. Explanation: Meaning of difficult parts.
-    
-    Important: Output plain text with simple formatting. Do not use bold symbols (**), hashtags (#) or other markdown artifacts. Use simple bullets (-) or numbering. Keep it clean and easy to read.`;
-
+    const prompt = `分析此句语法: "${text}". 返回 JSON: { "structure": ["主语:.."], "grammarPoints": [{"point": "..", "desc": ".."}], "translation": ".." }`;
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: MODEL_FAST,
-      contents: prompt
+      contents: prompt,
+      config: { responseMimeType: "application/json" }
     });
     return response.text || "";
-  } catch (error) {
-    return "分析失败";
-  }
+  } catch (error) { return "{}"; }
 };

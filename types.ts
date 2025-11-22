@@ -1,8 +1,7 @@
 
-export enum TranslationMode {
-  SENTENCE = 'sentence',
+export enum ViewMode {
   PARAGRAPH = 'paragraph',
-  FULL = 'full'
+  SENTENCE = 'sentence'
 }
 
 export interface WordDefinition {
@@ -12,27 +11,34 @@ export interface WordDefinition {
   phrases?: string[];
 }
 
+export interface GrammarParsedData {
+  structure: string[];
+  grammarPoints: { point: string; desc: string }[];
+  translation: string;
+}
+
 export interface WordData {
   id: string;
   text: string;
-  cleanText: string; // Text without punctuation for API calls
-  translation?: string; // Short inline translation
-  definition?: string; // JSON string of WordDefinition or raw text
+  cleanText: string; 
+  translation?: string; 
+  definition?: string; 
+  sentenceIndex: number; // Index of the sentence this word belongs to
 }
 
 export interface GrammarAnalysis {
   id: string;
   sourceText: string;
-  explanation: string;
+  explanation: string; 
 }
 
 export interface ContentBlock {
   id: string;
-  text: string; // The full text of the paragraph
-  words: WordData[]; // Parsed words for interaction
-  translation?: string; // Block translation (used for Paragraph/Full mode)
-  sentenceTranslations?: Record<string, string>; // Map of sentence index to translation
-  grammarAnalyses: GrammarAnalysis[]; // Pinned grammar notes
+  text: string; 
+  words: WordData[]; 
+  translation?: string; // Full paragraph translation
+  sentenceTranslations?: string[]; // Array of translations corresponding to sentence indices
+  grammarAnalyses: GrammarAnalysis[]; 
 }
 
 export interface LearningDocument {
@@ -40,7 +46,7 @@ export interface LearningDocument {
   title: string;
   createdAt: number;
   blocks: ContentBlock[];
-  translationMode: TranslationMode;
+  viewMode: ViewMode;
 }
 
 export interface SelectionState {

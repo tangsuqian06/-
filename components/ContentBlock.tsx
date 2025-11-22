@@ -1,128 +1,223 @@
-import React, { useState } from 'react';
-import { ContentBlock as ContentBlockType, TranslationMode, WordData } from '../types';
+
+import React, { useMemo, useState, useRef, useEffect } from 'react';
+import { ContentBlock as ContentBlockType, ViewMode, WordData } from '../types';
 import { Word } from './Word';
 import { GrammarBox } from './GrammarBox';
-import { translateText } from '../services/geminiService';
 
 interface Props {
   block: ContentBlockType;
-  mode: TranslationMode;
+  mode: ViewMode;
   onUpdateBlock: (id: string, updates: Partial<ContentBlockType>) => void;
   onUpdateWord: (blockId: string, wordId: string, updates: Partial<WordData>) => void;
 }
 
 export const ContentBlock: React.FC<Props> = ({ block, mode, onUpdateBlock, onUpdateWord }) => {
-  const [translating, setTranslating] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(block.text);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Helper to update specific word
-  const handleWordUpdate = (wordId: string, updates: Partial<WordData>) => {
-    onUpdateWord(block.id, wordId, updates);
+  // Reset edit text when block text changes externally
+  useEffect(() => {
+    setEditText(block.text);
+  }, [block.text]);
+
+  // Auto-focus and resize textarea when editing starts
+  useEffect(() => {
+    if (isEditing && textareaRef.current) {
+      textareaRef.current.focus();
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = textareaRef.current.scrollHeight + 'px';
+    }
+  }, [isEditing]);
+
+  const handleSaveEdit = () => {
+    if (editText.trim() !== block.text) {
+      onUpdateBlock(block.id, { text: editText });
+    }
+    setIsEditing(false);
   };
 
-  // Handle block translation
-  const handleTranslateBlock = async () => {
-    if (block.translation) return; // Already translated
-    setTranslating(true);
-    try {
-      const translation = await translateText(block.text);
-      onUpdateBlock(block.id, { translation });
-    } finally {
-      setTranslating(false);
-    }
+  const handleCancelEdit = () => {
+    setEditText(block.text);
+    setIsEditing(false);
   };
 
-  // Effect for modes
-  React.useEffect(() => {
-    if (mode === TranslationMode.FULL || mode === TranslationMode.PARAGRAPH) {
-      // In full or paragraph mode, we might auto-translate, or provide UI to do so.
-      // Let's auto-translate if FULL mode is active and translation is missing
-      if (mode === TranslationMode.FULL && !block.translation && !translating) {
-         handleTranslateBlock();
-      }
+  const handleDeleteBlock = () => {
+    if(confirm('确定要删除这一段吗？')) {
+        // Assuming parent handles empty text update as deletion or we need a delete prop.
+        // Since App.tsx updateBlock logic handles text updates by re-parsing, 
+        // passing empty text acts like clearing it, but true deletion needs parent support.
+        // For now, let's clear content or we can implement a delete callback in App.tsx later.
+        // Actually, let's just update text to empty string, App.tsx filters empty blocks usually?
+        // No, App.tsx doesn't filter on update. Let's just allow editing text.
+        onUpdateBlock(block.id, { text: "" }); 
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
-
-
+  };
+  
   const handleDeleteGrammar = (grammarId: string) => {
     const newAnalyses = block.grammarAnalyses.filter(g => g.id !== grammarId);
     onUpdateBlock(block.id, { grammarAnalyses: newAnalyses });
   };
 
-  // Manual Edit of text content (Simplified: Just allow deleting the block or simple content update logic could go here)
-  // For "User can freely add/delete content", we might need a text area mode.
-  // But doing rich text editing with the word-span structure is very complex for a single file.
-  // We will assume "Edit" means deleting the block or adding new blocks via the main UI.
-  // Or we provide a "Raw Edit" mode.
-  const [isEditing, setIsEditing] = useState(false);
-  const [editText, setEditText] = useState(block.text);
-
-  const saveEdit = () => {
-      // Naive re-parsing. Note: This loses existing annotations on this block!
-      // A real app would try to diff and preserve IDs.
-      onUpdateBlock(block.id, { text: editText }); // Parent needs to re-parse
-      setIsEditing(false);
+  const handleWordUpdate = (wordId: string, updates: Partial<WordData>) => {
+    onUpdateWord(block.id, wordId, updates);
   };
 
-  if (isEditing) {
-      return (
-          <div className="p-4 bg-gray-800 rounded mb-4 border border-gray-600">
-              <textarea 
-                className="w-full h-32 bg-gray-900 text-white p-2 rounded border border-gray-700 focus:border-accent-500 outline-none"
-                value={editText}
-                onChange={e => setEditText(e.target.value)}
-              />
-              <div className="flex justify-end gap-2 mt-2">
-                  <button onClick={() => setIsEditing(false)} className="px-3 py-1 text-gray-400 hover:text-white">取消</button>
-                  <button onClick={saveEdit} className="px-3 py-1 bg-accent-600 text-white rounded hover:bg-accent-500">保存</button>
-              </div>
-          </div>
-      )
-  }
+  // Group words by sentence index for SENTENCE view
+  const sentences = useMemo(() => {
+    const grouped: { index: number; words: WordData[]; translation?: string }[] = [];
+    
+    block.words.forEach(word => {
+        const idx = word.sentenceIndex;
+        if (!grouped[idx]) {
+            grouped[idx] = { 
+                index: idx, 
+                words: [], 
+                translation: block.sentenceTranslations?.[idx] 
+            };
+        }
+        grouped[idx].words.push(word);
+    });
+    
+    return grouped;
+  }, [block.words, block.sentenceTranslations]);
+
+  // Helper to render a list of words/tokens correctly
+  const renderTokens = (words: WordData[]) => (
+      <>
+        {words.map((word) => {
+            // If it's not an interactable word (just punctuation or whitespace), 
+            // render as plain text to prevent spacing/selection issues.
+            if (!word.cleanText) {
+                return (
+                    <span key={word.id} className="text-gray-300 select-text">
+                        {word.text}
+                    </span>
+                );
+            }
+            return (
+                <Word 
+                    key={word.id} 
+                    word={word} 
+                    context={block.text}
+                    onUpdate={handleWordUpdate} 
+                />
+            );
+        })}
+      </>
+  );
 
   return (
-    <div className="mb-8 group relative pl-4 border-l-2 border-transparent hover:border-gray-700 transition-colors" data-block-id={block.id}>
+    <div className="mb-10 group relative pl-6 border-l-4 border-gray-800 hover:border-accent-500/50 transition-colors duration-300" data-block-id={block.id}>
         
-        {/* Tools for this block */}
-        <div className="absolute -left-8 top-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-2">
-             <button onClick={() => setIsEditing(true)} className="p-1 text-gray-500 hover:text-blue-400" title="编辑原文">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-             </button>
-             {/* Sentence/Paragraph Translation Toggle for this block if mode is mixed? Let's stick to global mode + manual overrides */}
-             <button onClick={handleTranslateBlock} className="p-1 text-gray-500 hover:text-green-400" title="翻译本段">
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
-             </button>
-        </div>
-
-        {/* Main English Content */}
-        <div className="text-xl leading-loose text-gray-200 font-serif tracking-wide">
-            {block.words.map((word) => (
-            <Word 
-                key={word.id} 
-                word={word} 
-                context={block.text}
-                onUpdate={handleWordUpdate} 
-            />
-            ))}
-        </div>
-
-        {/* Block Translation Display */}
-        {(block.translation || mode === TranslationMode.FULL) && (
-            <div className="mt-3 text-base text-gray-400 leading-relaxed border-t border-gray-800 pt-2">
-               {translating ? <span className="animate-pulse">正在翻译...</span> : block.translation}
+        {/* Edit Button (Visible on Hover) */}
+        {!isEditing && (
+            <div className="absolute right-0 top-0 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+                <button 
+                    onClick={() => setIsEditing(true)}
+                    className="p-1.5 text-gray-500 hover:text-accent-400 bg-gray-900/80 rounded backdrop-blur"
+                    title="编辑内容"
+                >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                </button>
+                 <button 
+                    onClick={handleDeleteBlock}
+                    className="p-1.5 text-gray-500 hover:text-red-400 bg-gray-900/80 rounded backdrop-blur"
+                    title="清空此段"
+                >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
             </div>
         )}
 
-        {/* Pinned Grammar Analyses */}
-        <div className="space-y-2">
-            {block.grammarAnalyses.map(analysis => (
-                <GrammarBox 
-                    key={analysis.id} 
-                    analysis={analysis} 
-                    onDelete={() => handleDeleteGrammar(analysis.id)} 
+        {/* --- EDIT MODE --- */}
+        {isEditing ? (
+            <div className="bg-gray-900 p-4 rounded-lg border border-accent-500/30 shadow-lg">
+                <textarea
+                    ref={textareaRef}
+                    value={editText}
+                    onChange={(e) => setEditText(e.target.value)}
+                    className="w-full bg-transparent text-gray-200 font-serif text-lg leading-loose resize-none focus:outline-none custom-scrollbar"
+                    placeholder="输入英语内容..."
+                    rows={3}
                 />
-            ))}
-        </div>
+                <div className="flex justify-end gap-3 mt-3 border-t border-gray-800 pt-3">
+                    <button 
+                        onClick={handleCancelEdit}
+                        className="px-4 py-1.5 text-sm text-gray-400 hover:text-white transition-colors"
+                    >
+                        取消
+                    </button>
+                    <button 
+                        onClick={handleSaveEdit}
+                        className="px-4 py-1.5 text-sm bg-accent-600 hover:bg-accent-500 text-white rounded font-medium shadow-lg shadow-accent-500/20"
+                    >
+                        保存修改
+                    </button>
+                </div>
+            </div>
+        ) : (
+            /* --- VIEW MODE --- */
+            <>
+                {/* Paragraph View */}
+                {mode === ViewMode.PARAGRAPH && (
+                    <>
+                        <div className="text-xl leading-loose text-gray-200 font-serif tracking-wide text-justify break-words">
+                            {renderTokens(block.words)}
+                        </div>
+                        
+                        {/* Paragraph Translation */}
+                        {block.translation && (
+                            <div className="mt-4 p-4 bg-gray-900/50 rounded-lg border border-gray-800 text-gray-400 text-base leading-relaxed font-sans">
+                                <div className="flex items-center gap-2 mb-2 text-xs font-bold uppercase tracking-wider text-gray-600">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129" /></svg>
+                                段落翻译
+                                </div>
+                                {block.translation}
+                            </div>
+                        )}
+                    </>
+                )}
+
+                {/* Sentence View */}
+                {mode === ViewMode.SENTENCE && (
+                    <div className="space-y-6">
+                        {sentences.map((sent) => (
+                            <div key={sent.index} className="bg-gray-900/30 rounded-xl p-4 hover:bg-gray-900/60 transition-colors border border-transparent hover:border-gray-800">
+                                {/* English Sentence */}
+                                <div className="text-xl leading-loose text-gray-200 font-serif mb-3 break-words">
+                                    {renderTokens(sent.words)}
+                                </div>
+                                
+                                {/* Sentence Translation */}
+                                {sent.translation ? (
+                                    <div className="text-accent-100/80 text-base border-t border-gray-800 pt-2 font-sans">
+                                        {sent.translation}
+                                    </div>
+                                ) : (
+                                    <div className="text-gray-600 text-sm italic pt-1">
+                                        (暂无翻译 - 请点击“全文翻译”获取)
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </>
+        )}
+
+        {/* Pinned Grammar Analyses (Always visible at bottom of block) */}
+        {!isEditing && block.grammarAnalyses.length > 0 && (
+            <div className="mt-6 space-y-4 pl-4 border-l border-dashed border-gray-700">
+                {block.grammarAnalyses.map(analysis => (
+                    <GrammarBox 
+                        key={analysis.id} 
+                        analysis={analysis} 
+                        onDelete={() => handleDeleteGrammar(analysis.id)} 
+                    />
+                ))}
+            </div>
+        )}
     </div>
   );
 };
